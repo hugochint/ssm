@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-Br">
+<head>
+  <meta charset="UTF-8">
+  <title>SMM – Smart Meter Master</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {font-family: Arial, sans-serif; margin:2rem;}
+    #dashboard {display:flex; flex-direction:column; align-items:center;}
+    .card {background:#fafafa; padding:1rem; margin:0.5rem 0; border-radius:6px; width:90%; max-width:600px;}
+    .value {font-size:2rem; margin:0.5rem 0;}
+    button {margin:0.3rem; padding:0.4rem 0.8rem; font-size:1rem;}
+  </style>
+</head>
+<body>
+<div id="dashboard">
+  <h2>SMM – Smart Meter Master</h2>
+
+  <!-- Linha de valores atuais -->
+  <div class="card">
+    <span class="value">P (kW): <span id="kW">—</span></span>
+    <span class="value">V (L‑N): <span id="V">—</span></span>
+    <span class="value">A (Fase): <span id="A">—</span></span>
+    <span class="value">PF: <span id="PF">—</span></span>
+  </div>
+
+  <!-- Gráfico de potência vs tempo -->
+  <canvas id="potChart" width="600" height="200"></canvas>
+
+  <!-- Botões de ação -->
+  <div style="margin-top:1rem;">
+    <button onclick="marcarEvento()">Marcar evento (degrau)</button>
+    <button onclick="exportCSV()">Exportar CSV</button>
+  </div>
+</div>
+
+<script>
+ // ---------- Configuração inicial ----------
+ const PORT_SMM = "http://127.0.0.1:5000";   // mesmo host do Flask
+
+ // ---------- Leitura periódica dos valores ----------
+ async function fetchValues() {
+   const res = await fetch(`${PORT_SMM}/api/values`);
+   const data = await res.json();
+   document.getElementById("kW").textContent = data.kW !== undefined ? data.kW.toFixed(3) : "—";
+   document.getElementById("V").textContent    = data.V !== undefined ? data.V.toFixed(1) : "—";
+   document.getElementById("A").textContent    = data.A !== undefined ? data.A.toFixed(1) : "—";
+   document.getElementById("PF").textContent   = data.PF !== undefined ? data.PF.toFixed(3) : "—";
+ }
+
+ // ---------- Atualizar gráfico ----------
+ let chart; // criado depois que soubermos os dados iniciais
+ function initChart() {
+   const ctx = document.getElementById("potChart").getContext("2d");
+   chart = new Chart(ctx, {
+     type: "line",
+     data: {
+       labels: [],          // tempos relativos (s)
+       datasets: [{ label: "P (kW)", data: [], borderColor: "blue", fill: false, tension: 0.1 }]
+     },
+     options: {
+       scales: { y: { position: "left", title: { display: true, text: "kW" } },
+                 x: { title: { display: true, text: "Tempo (s)" } }
+       },
+       plugins: { legend: { display: false } }
+     }
+   });
+ }
+
+ function updateChart(kw) {
+   const now = performance.now() / 1000; // segundos desde o início
+   chart.data.labels.push(now);
+   chart.data.datasets[0].data.push(kw);
+   // Mantém apenas os últimos 60 s (aprox. 300 pontos a 5 Hz)
+   if (chart.data.labels.length > 300) {
+     chart.data.labels.shift();
+     chart.data.datasets[0].data.shift();
+   }
+   chart.update();
+ }
+
+ // ---------- Marcador de evento ----------
+ function marcarEvento() {
+   fetch(`${PORT_SMM}/mark-event`, {method: "POST"})
+     .then(r => r.text())
+     .then(txt => alert(txt))
+     .catch(err => console.error(err));
+ }
+
+ // ---------- Exportar CSV ----------
+ function exportCSV() {
+   window.location = `${PORT_SMM}/export-csv`;
+ }
+
+ // ---------- Loop principal ----------
+ async function main() {
+   initChart();
+   // primeira leitura para popular o gráfico
+   await fetchValues();
+   // a cada 200 ms (~5 Hz) atualiza valores e gráfico
+   setInterval(async () => {
+     await fetchValues();
+     // precisamos do valor kW somente; se for “—” não atualizamos o gráfico
+     const kwEl = document.getElementById("kW");
+     if (kwEl.textContent !== "—") {
+       const kw = parseFloat(kwEl.textContent);
+       updateChart(kw);
+     }
+   }, 200);
+ }
+
+ main();
+</script>
+</body>
+</html>
